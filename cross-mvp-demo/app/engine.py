@@ -34,7 +34,7 @@ class PlanRequest(BaseModel):
         for key in CITIES:
             if v.strip().casefold() == key.casefold():
                 return key
-        raise ValueError("This demo currently supports Lisbon, Porto, Paris, Rome and Prague.")
+        return v.strip().title()
 
 
 @dataclass(frozen=True)

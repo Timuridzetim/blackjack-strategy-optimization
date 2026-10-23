@@ -8,6 +8,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from .catalog import CITIES
+from .intent import parse_intent
+from .discovery import explore_trip
 from .engine import PlanRequest, parse_message, plan_trip
 
 BASE=Path(__file__).parent
@@ -20,12 +22,12 @@ def index():
 
 @app.get("/api/health")
 def health():
-    return {"ok":True,"brand":"CROSS","inventory":"demo fixtures", "llm_available": bool(os.getenv("LLM_API_KEY"))}
+    return {"ok":True,"brand":"CROSS","inventory":"demo fixtures + open place discovery", "llm_available": bool(os.getenv("LLM_API_KEY") or os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY"))}
 
 @app.get("/api/config")
 def config():
     return {"destinations":[{"name":name,"country":value["country"],"tagline":value["tagline"]} for name,value in CITIES.items()],
-            "mode":"demo","free_to_user":True,"live_inventory":False,
+            "mode":"demo_and_osm_discovery","free_to_user":True,"live_inventory":False, "llm_configured": bool(os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY")),
             "pricing_message":"Sample estimates only; no live inventory or price lock."}
 
 class ParseRequest(BaseModel):
@@ -33,11 +35,13 @@ class ParseRequest(BaseModel):
     current: dict = Field(default_factory=dict)
 
 @app.post("/api/parse")
-def parse(req:ParseRequest):
-    return {"fields":parse_message(req.message,req.current)}
+async def parse(req:ParseRequest):
+    return await parse_intent(req.message,req.current)
 
 @app.post("/api/plan")
-def plan(req:PlanRequest):
+async def plan(req:PlanRequest):
+    if req.destination not in CITIES or any(x.lower().startswith("sauna") for x in req.interests):
+        return await explore_trip(req)
     return plan_trip(req)
 
 class DescribeRequest(BaseModel):

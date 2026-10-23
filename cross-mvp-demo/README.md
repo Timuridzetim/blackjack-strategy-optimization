@@ -122,3 +122,22 @@ Dockerfile            single small VPS process
 ```
 
 © CROSS prototype, 2026.
+
+
+## Real-place discovery and optional AI parsing (v0.3)
+
+- Freeform text may describe any city. Helsinki, 4 people, €5,000 total, saunas is supported.
+- `/api/parse` uses bounded deterministic parsing and, if configured, an optional
+  free-tier AI provider to extract structured fields in multiple languages.
+- For destinations outside the original five-city *synthetic* demo, `/api/plan`
+  returns `mode=live_discovery` with OpenStreetMap venue data or clearly
+  attributed curated official Helsinki sauna venue links if OSM is unavailable.
+- **Flight and hotel prices remain unquoted** until approved live inventory
+  integrations. The budget shown in real-place mode is a cap, not an all-in quote.
+- Free AI: set `GROQ_API_KEY` (model `openai/gpt-oss-20b`, endpoint
+  `https://api.groq.com/openai/v1`) or `GEMINI_API_KEY` (model
+  `gemini-2.5-flash`) in the Render dashboard Environment tab. Never add a
+  secret to git or frontend JavaScript. The app works without a key using a
+  deterministic parser. Limit public access to avoid consuming free quotas.
+- OpenStreetMap/Nominatim is volunteer-operated and rate limited; use caching,
+  attribution and authorized commercial providers before launching at scale.
