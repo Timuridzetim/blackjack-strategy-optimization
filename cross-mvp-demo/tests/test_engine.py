@@ -90,3 +90,46 @@ def test_helsinki_real_venue_fallback_without_flight_pricing():
     assert any('Löyly' in p['name'] for p in data['places'])
     assert 'NOT quoted' in data['budget_notice']
     assert data['count']>=4
+
+
+def test_tallinn_fallback_has_real_venue_cards_even_when_osm_fails(monkeypatch):
+    """Regression for reported Tallinn 0 locations screenshot."""
+    import asyncio
+    import app.discovery as discovery
+
+    async def unavailable(*_args, **_kwargs):
+        raise LookupError('Public mapping servers temporarily unavailable')
+
+    monkeypatch.setattr(discovery, '_load_osm', unavailable)
+    request=PlanRequest(origin='Madrid', destination='Tallinn', travelers=2,
+                        days=4, budget=700, interests=['Culture','Views'])
+    result=asyncio.run(discovery.explore_trip(request))
+    assert result['status']=='discovered'
+    assert result['source_type']=='directory_fallback'
+    assert result['count']>=6
+    names={p['name'] for p in result['places']}
+    assert 'Tallinn Old Town' in names
+    assert 'Kohtuotsa viewing platform' in names
+    assert all(p['url'].startswith('https://') for p in result['places'])
+    assert all('price_eur_pp' not in p for p in result['places'])
+    assert result['travelers']==2 and result['budget']==700
+    assert len(result['days_preview'])==4
+    assert any(d['stops'] for d in result['days_preview'])
+    assert 'NOT quoted' in result['budget_notice']
+
+
+def test_tallinn_osm_success_does_not_discard_official_sources(monkeypatch):
+    import asyncio
+    import app.discovery as discovery
+
+    async def success(*_args,**_kwargs):
+        return ([{'name':'Contemporary Gallery', 'category':'Culture',
+                  'url':'https://www.openstreetmap.org/node/123',
+                  'details':'', 'source':'OpenStreetMap'}], 'Estonia')
+
+    monkeypatch.setattr(discovery, '_load_osm', success)
+    result=asyncio.run(discovery.explore_trip(PlanRequest(destination='Tallinn')))
+    assert result['source_type']=='openstreetmap_live'
+    assert result['count']>=7
+    assert any(p['name']=='Contemporary Gallery' for p in result['places'])
+    assert any(p['source']=='Visit Tallinn · official' for p in result['places'])

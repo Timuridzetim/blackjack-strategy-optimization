@@ -2,14 +2,24 @@
 from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from urllib.parse import quote
-import asyncio
 import httpx
+import logging
 from .engine import PlanRequest
 
 CACHE={}
+logger=logging.getLogger(__name__)
+OVERPASS_INSTANCES=(
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
+)
 UA='CROSS-Travel-Planner-Student-Demo/0.3 (noncommercial education; https://cross-mvp-demo.onrender.com)'
 KNOWN={
     'Helsinki': (60.1699,24.9384,'Finland'),
+    'Tallinn': (59.4370,24.7536,'Estonia'),
+    'Stockholm': (59.3293,18.0686,'Sweden'),
+    'Berlin': (52.5200,13.4050,'Germany'),
+    'Copenhagen': (55.6761,12.5683,'Denmark'),
+    'Oslo': (59.9139,10.7522,'Norway'),
     'Lisbon':(38.7223,-9.1393,'Portugal'),
     'Madrid':(40.4168,-3.7038,'Spain'),
     'Porto':(41.1579,-8.6291,'Portugal'),
@@ -23,6 +33,36 @@ HELSINKI_SAUNAS=[
  {'name':'Kotiharjun Sauna','category':'Saunas','url':'https://www.kotiharjunsauna.fi/en','details':'Traditional wood-fired neighbourhood sauna · check entry policy', 'price_eur_pp':16, 'price_source':'Published general admission on venue website; reconfirm for dates'},
  {'name':'Sompasauna','category':'Saunas','url':'https://www.myhelsinki.fi/visit/seven-ways-to-experience-sauna-in-helsinki/','details':'Community sauna maintained by visitors · check site guidance'},
 ]
+
+# Individually checked listings from the official Tallinn tourism authority.
+# Used as an offline fallback when volunteer OpenStreetMap endpoints throttle.
+TALLINN_OFFICIAL_PLACES=[
+    {'name':'Tallinn Old Town','category':'Culture',
+     'url':'https://visittallinn.ee/eng/visitor/ideas-tips/tips-and-guides/top-must-see-sights',
+     'details':'UNESCO-listed medieval streets, towers and courtyards'},
+    {'name':'Tallinn Town Hall Square','category':'Culture',
+     'url':'https://visittallinn.ee/eng/visitor/ideas-tips/tips-and-guides/top-must-see-sights',
+     'details':'Historic central square and Gothic Town Hall'},
+    {'name':'Kohtuotsa viewing platform','category':'Views',
+     'url':'https://www.visittallinn.ee/eng/visitor/see-do/things-to-do/attractions-museums/177800/kohtuotsa-viewing-platform',
+     'details':'Panoramic viewpoint overlooking the Old Town'},
+    {'name':'Kadriorg Park','category':'Outdoors',
+     'url':'https://www.visittallinn.ee/eng/visitor/see-do/things-to-do/attractions-museums/174766/kadriorg-park',
+     'details':'Historic landscaped palace park with walking paths'},
+    {'name':'Kumu Art Museum','category':'Culture',
+     'url':'https://visittallinn.ee/eng/visitor/see-do/things-to-do/attractions-museums/175253/kumu-art-museum',
+     'details':'Estonian art collections and temporary exhibitions'},
+    {'name':'Seaplane Harbour Maritime Museum','category':'Culture',
+     'url':'https://visittallinn.ee/eng/visitor/ideas-tips/tips-and-guides/top-must-see-sights',
+     'details':'Maritime museum and historical submarine exhibits'},
+    {'name':'Telliskivi Creative City','category':'Culture',
+     'url':'https://visittallinn.ee/eng/visitor/ideas-tips/tips-and-guides/top-must-see-sights',
+     'details':'Former industrial quarter with design, food and art'},
+    {'name':"St Catherine's Passage",'category':'Culture',
+     'url':'https://visittallinn.ee/eng/visitor/ideas-tips/tips-and-guides/top-must-see-sights',
+     'details':'Medieval alley and traditional craft workshops'},
+]
+
 
 def _pack(name,cat,url,details='',origin='OpenStreetMap',**extras):
     return {'name':name,'category':cat,'url':url,'details':details,'source':origin,**extras}
@@ -40,17 +80,27 @@ async def _load_osm(destination:str,interest_sauna:bool):
             r.raise_for_status();items=r.json()
         if not items:raise LookupError('Destination was not found in OpenStreetMap')
         lat=float(items[0]['lat']);lon=float(items[0]['lon']);country=items[0].get('address',{}).get('country','')
-    # The query returns named POIs only, to keep load bounded and results useful.
-    # No price is read from OSM; operator websites are authoritative.
+    # Public Overpass instances have no availability guarantee. Bound the work,
+    # retry another independent endpoint, and keep all price fields unquoted.
     radius=7000
-    q=f'''[out:json][timeout:17];(
+    q=f'''[out:json][timeout:10];(
        nwr(around:{radius},{lat},{lon})["leisure"="sauna"]["name"];
        nwr(around:{radius},{lat},{lon})["name"~"sauna|löyly|allas",i];
        nwr(around:{radius},{lat},{lon})["tourism"~"attraction|museum"]["name"];
-    );out center 75;'''
-    async with httpx.AsyncClient(timeout=21,headers={'User-Agent':UA}) as client:
-        r=await client.post('https://overpass.kumi.systems/api/interpreter',content=q)
-        r.raise_for_status();entries=r.json()['elements']
+    );out center 65;'''
+    last_error=None
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0,connect=4.0),headers={'User-Agent':UA}) as client:
+        for endpoint in OVERPASS_INSTANCES:
+            try:
+                r=await client.post(endpoint,data={'data':q})
+                r.raise_for_status()
+                entries=r.json()['elements']
+                break
+            except (httpx.HTTPError,ValueError,KeyError,TypeError) as exc:
+                last_error=exc
+                logger.warning('OpenStreetMap endpoint unavailable: %s',type(exc).__name__)
+        else:
+            raise LookupError('OpenStreetMap endpoints unavailable') from last_error
     data=[];seen=set()
     for el in entries:
         tags=el.get('tags') or {};name=(tags.get('name:en') or tags.get('name') or '').strip()
@@ -70,19 +120,33 @@ async def _load_osm(destination:str,interest_sauna:bool):
 
 async def explore_trip(req:PlanRequest)->dict:
     now=datetime.now(timezone.utc).isoformat();sauna=any(x.lower().startswith('sauna') for x in req.interests)
+    city=req.destination.strip().title()
     try:
         places,country=await _load_osm(req.destination,sauna)
+        if not places:
+            raise LookupError('No matching named places found')
         mode='openstreetmap_live'
         lookup_notice='Real location records from OpenStreetMap. Admissions, opening hours and availability must be confirmed with venues.'
-    except (LookupError,httpx.HTTPError,ValueError,KeyError,IndexError):
-        places=[];country=KNOWN.get(req.destination.title(),(0,0,''))[2]
+    except (LookupError,httpx.HTTPError,ValueError,KeyError,IndexError,TypeError) as exc:
+        logger.warning('Place discovery using official-directory fallback: %s',type(exc).__name__)
+        places=[];country=KNOWN.get(city,(0,0,''))[2]
         mode='directory_fallback'
-        lookup_notice='Live place lookup is temporarily unavailable. Showing separately sourced venue links where available.'
-    if req.destination.casefold()=='helsinki' and sauna:
+        lookup_notice='Live OpenStreetMap lookup is temporarily unavailable. Showing source-linked official tourism listings when available.'
+    # Never let a missing Overpass response erase the entire destination page.
+    # Tourist-board links are references, not live quotes or availability.
+    if city == 'Tallinn':
+        existing={p['name'].casefold() for p in places}
+        for item in TALLINN_OFFICIAL_PLACES:
+            if item['name'].casefold() not in existing:
+                places.append(_pack(item['name'],item['category'],item['url'],item['details'],origin='Visit Tallinn · official'))
+    if city == 'Helsinki' and sauna:
         existing={p['name'].casefold() for p in places}
         for s in reversed(HELSINKI_SAUNAS):
             if s['name'].casefold() not in existing:
                 places.insert(0,_pack(s['name'],s['category'],s['url'],s['details'],origin='Venue / MyHelsinki',**{k:v for k,v in s.items() if k.startswith('price_')}))
+    # Include trusted source lists first on fallback; prefer requested interests.
+    if city == 'Tallinn' and 'Views' in req.interests and mode == 'directory_fallback':
+        places.sort(key=lambda p:(p['category']!='Views',p['name']))
     places=places[:18]
     # Empty means failed search, not an opportunity to hallucinate.
     end=req.start_date+timedelta(days=req.days-1)
