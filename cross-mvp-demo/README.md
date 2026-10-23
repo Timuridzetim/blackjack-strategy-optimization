@@ -168,3 +168,24 @@ non-live optimizer tests. Never show the old sample flight/hotel prices as real.
 
 OpenStreetMap and Wikipedia attribution is visible in results. Public APIs have
 usage limits and should not be used as unlimited enterprise search infrastructure.
+
+## Free-text interpretation: semantic boundary
+
+The correct data flow is `user message -> AI (when API key configured) -> validated structured travel intent -> editable form -> geographic discovery`. The planner **does not run when the message lacks a grounded destination**. Explicit origins, duration, party size, interests, and total EUR budget are extracted individually. The model cannot change the destination to an activity (e.g. `I like to party` is `Nightlife`, not a city called `Party`). Only the validated intent is used to call the geosearch.
+
+Configure exactly one of these environment variables in Render > Environment:
+
+- `GROQ_API_KEY` for the supported Groq JSON-mode extraction endpoint. Default model: `openai/gpt-oss-20b`.
+- `GEMINI_API_KEY` for the Gemini JSON-output extraction endpoint. Default model: `gemini-2.5-flash`.
+
+Do not commit credentials or place them in browser code. No key means **rules-only mode**, which parses common patterns with explicit confidence checks. It is not a neural parser and will ask for clarification rather than guess on unusual syntax. An invalid or rate-limited key also triggers a transparent rules fallback. Both extraction methods validate city names against the original message; actual geographic provider records are retrieved by a separate, bounded search layer.
+
+Regression case:
+
+```
+Antalya 5 days 1 person, 1000 eur, i like to party
+=> destination: Antalya, days: 5, travelers: 1, budget: 1000,
+   interests: [Nightlife]
+```
+
+Flights, stays and bookings are not included in this location-discovery phase. A real budget-matched itinerary requires licensed supplier quote APIs.

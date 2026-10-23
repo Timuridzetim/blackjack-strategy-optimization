@@ -186,3 +186,96 @@ def test_rejects_unsafe_media_url():
     import app.discovery as d
     assert d._url('javascript:alert(1)','https://www.openstreetmap.org')=='https://www.openstreetmap.org'
     assert d._url('http://127.0.0.1/x','https://www.openstreetmap.org')=='https://www.openstreetmap.org'
+
+# Free-text interpretation must not confuse semantic intent with destination.
+def test_antalyas_nightlife_is_not_party_village():
+    from app.intent import fallback_parse
+    text='Antalya 5 days 1 person, 1000 eur, i like to party'
+    data=fallback_parse(text, {'destination':'Lisbon','travelers':2,'budget':700})
+    assert data['destination']=='Antalya'
+    assert data['travelers']==1 and data['days']==5 and data['budget']==1000
+    assert data['interests']==['Nightlife']
+
+
+def test_partying_in_antalyas_is_still_antalyas():
+    from app.intent import fallback_parse
+    r=fallback_parse('I want to party in Antalya for 5 days with 1000 euros')
+    assert r['destination']=='Antalya'
+    assert 'Nightlife' in r['interests']
+
+
+def test_other_origins_are_not_destinations():
+    from app.intent import fallback_parse
+    r=fallback_parse('Plan 5 days from Madrid to Lisbon for 2 people under €700')
+    assert r['origin']=='Madrid' and r['destination']=='Lisbon'
+    r2=fallback_parse('Madrid to Lisbon 5 days 2 people 700 eur')
+    assert r2['destination']=='Lisbon'
+
+
+def test_no_real_destination_blocks_search_not_autofilled_lisbon(monkeypatch):
+    import asyncio
+    from app.intent import parse_intent
+    monkeypatch.delenv('GROQ_API_KEY',raising=False)
+    monkeypatch.delenv('GEMINI_API_KEY',raising=False)
+    monkeypatch.delenv('LLM_API_KEY',raising=False)
+    r=asyncio.run(parse_intent('I like to party',{'destination':'Lisbon','origin':'Madrid','travelers':2}))
+    assert not r['ok'] and 'destination' in r['missing']
+    assert 'destination' not in r['fields']
+    assert r['ai_connected'] is False
+    assert 'Nightlife' in r['fields']['interests']
+
+
+def test_no_key_antalyas_request_is_parsed_without_fabricated_ai(monkeypatch):
+    import asyncio
+    from app.intent import parse_intent
+    for name in ('GROQ_API_KEY','GEMINI_API_KEY','LLM_API_KEY'):monkeypatch.delenv(name,raising=False)
+    r=asyncio.run(parse_intent('Antalya 5 days 1 person, 1000 eur, i like to party',{'destination':'Lisbon','travelers':2}))
+    assert r['ok'] and r['fields']['destination']=='Antalya'
+    assert r['fields']['travelers']==1 and r['fields']['budget']==1000
+    assert r['fields']['interests']==['Nightlife']
+    assert r['understanding']=='rules_only'
+
+
+def test_misguided_llm_destination_is_rejected(monkeypatch):
+    import asyncio, httpx
+    from app import intent
+    monkeypatch.setenv('GROQ_API_KEY','not-a-real-key')
+    def handler(request):
+        return httpx.Response(200,json={'choices':[{'message':{'content':'{"destination":"Party","days":5,"travelers":1,"budget":1000,"interests":["Nightlife"]}'}}]})
+    class Client(httpx.AsyncClient):
+        def __init__(self,*a,**kw):super().__init__(*a,transport=httpx.MockTransport(handler),**kw)
+    monkeypatch.setattr(intent.httpx,'AsyncClient',Client)
+    result=asyncio.run(intent.parse_intent('Antalya 5 days 1 person, 1000 eur, i like to party'))
+    assert result['ok'] and result['fields']['destination']=='Antalya'
+    assert result['understanding']=='ai_validated'
+
+
+def test_ai_no_grounded_destination_fails_closed(monkeypatch):
+    import asyncio, httpx
+    from app import intent
+    monkeypatch.setenv('GROQ_API_KEY','test-key')
+    def handler(request):
+        return httpx.Response(200,json={'choices':[{'message':{'content':'{"destination":"Party","interests":["Nightlife"]}'}}]})
+    class Client(httpx.AsyncClient):
+        def __init__(self,*a,**kw):super().__init__(*a,transport=httpx.MockTransport(handler),**kw)
+    monkeypatch.setattr(intent.httpx,'AsyncClient',Client)
+    result=asyncio.run(intent.parse_intent('I like to party',{'destination':'Lisbon'}))
+    assert not result['ok'] and 'destination' not in result['fields']
+
+
+def test_time_of_year_is_not_city():
+    from app.intent import fallback_parse
+    assert fallback_parse('I want to visit Rome in May')['destination']=='Rome'
+    assert fallback_parse('I want to visit New York in November')['destination']=='New York'
+
+
+def test_many_locations_and_semantic_intents():
+    from app.intent import fallback_parse
+    city_list=('Antalya','Tirana','Reykjavik','Baku','Osaka','Valencia','Tbilisi','Belgrade','Helsinki','Prague')
+    for city in city_list:
+        for hobby,tag in (('I like to party','Nightlife'),('We want saunas','Saunas'),('We want food','Food')):
+            prompt=f'{city} 5 days 1 person, 1000 eur, {hobby}'
+            parsed=fallback_parse(prompt)
+            assert parsed['destination']==city,(prompt,parsed)
+            assert parsed['travelers']==1 and parsed['days']==5 and parsed['budget']==1000
+            assert tag in parsed['interests']

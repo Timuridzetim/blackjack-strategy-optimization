@@ -11,10 +11,51 @@ function setDefaultDate(){const date=new Date();date.setDate(date.getDate()+28);
 function updateBudget(source='range'){const el=$('#budget');const direct=$('#budget-direct');if(source==='direct'){const n=Math.max(100,Math.min(20000,Number(direct.value)||700));el.value=String(Math.max(200,n));}else{direct.value=String(el.value)}el.style.setProperty('--filled', ((Number(el.value)-Number(el.min))/(Number(el.max)-Number(el.min))*100).toFixed(2)+'%')}
 function requestPayload(){return {origin:$('#origin').value.trim()||'Madrid',destination:$('#destination').value,start_date:$('#start_date').value,days:Number($('#days').value),travelers:Number($('#travelers').value),budget:Number($('#budget-direct').value),preference:$('#preference').value,interests:state.selectedInterests,message:$('#prompt').value.trim()}}
 function assignFields(fields){for (const id of ['origin','destination','days','travelers','budget','start_date','preference']) {if(fields[id]!==undefined){const el=$('#'+id);if(el)el.value=String(fields[id]);if(id==='budget')$('#budget-direct').value=String(fields[id])}}if(Array.isArray(fields.interests))state.selectedInterests=fields.interests;updateBudget('direct')}
-async function parsePrompt(){const message=$('#prompt').value.trim();if(!message){toast('Write a trip request first');return false}try{const r=await fetch('/api/parse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,current:requestPayload()})});if(!r.ok)throw Error('Could not parse');const d=await r.json();assignFields(d.fields);toast((d.understanding==='ai'?'✦ AI':'✦ CROSS')+' understood your request');return true}catch(e){toast('Could not apply your request. Try the fields below.');return false}}
-async function plan(e){if(e)e.preventDefault();if(e && $('#prompt').value.trim())await parsePrompt();const button=$('#submit-plan');button.disabled=true;button.querySelector('span:nth-child(2)').textContent='Optimizing your trip…';$('#results').innerHTML='<div class="result-loading">✦ CROSS is discovering real places from multiple sources…</div>';
- try{const payload=requestPayload();const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok){const errors=(d.detail||[]);throw Error(Array.isArray(errors)?errors.map(x=>x.msg).join('; '):String(errors))}state.response=d;state.payload=payload;state.selection=0;state.tab='overview';render();const results=$('#results');results.scrollIntoView({behavior:'smooth',block:'start'});}catch(err){$('#results').innerHTML='<div class="not-found"><h3>We hit a snag.</h3><p>'+esc(err.message)+'</p><button class="outline-button" type="button" id="retry">Try again</button></div>';$('#retry')?.addEventListener('click',()=>plan())}
- finally{button.disabled=false;button.querySelector('span:nth-child(2)').textContent='Build my trip'}}
+async function parsePrompt(){
+ const message=$('#prompt').value.trim();
+ if(!message){toast('Describe your trip first');return false}
+ try{
+  const r=await fetch('/api/parse',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({message,current:requestPayload()})});
+  if(!r.ok)throw Error('Request interpretation failed');
+  const d=await r.json();
+  if(!d.ok){
+   $('#results').innerHTML=`<div class="not-found"><span class="section-label">REVIEW THE TRIP REQUEST</span><h3>We need your destination city.</h3><p>${esc(d.message||'Please specify a destination city.')}</p><p>No search was started, because guessing a destination would produce irrelevant results.</p></div>`;
+   $('#results').scrollIntoView({behavior:'smooth',block:'start'});
+   toast('Destination unclear — no incorrect trip generated');
+   return false;
+  }
+  assignFields(d.fields);
+  // Never call a heuristic parser AI. Provider status is returned by the backend.
+  toast((d.understanding==='ai_validated'?'✦ AI interpreted: ':'✓ Verified: ')+d.fields.destination+' · '+d.fields.travelers+' travelers');
+  return true;
+ }catch(e){toast('Trip interpretation failed — review details before searching');return false}
+}
+async function plan(e){
+ if(e)e.preventDefault();
+ const button=$('#submit-plan');
+ if(button.disabled)return;
+ button.disabled=true;
+ button.querySelector('span:nth-child(2)').textContent='Understanding your trip…';
+ try{
+  if(e && $('#prompt').value.trim()){
+    const good=await parsePrompt();
+    if(!good)return;
+  }
+  button.querySelector('span:nth-child(2)').textContent='Finding real places…';
+  $('#results').innerHTML='<div class="result-loading">✦ CROSS is finding places that fit your destination and interests…</div>';
+  const payload=requestPayload();
+  const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const d=await r.json();
+  if(!r.ok){const errors=(d.detail||[]);throw Error(Array.isArray(errors)?errors.map(x=>x.msg).join('; '):String(errors))}
+  state.response=d;state.payload=payload;state.selection=0;state.tab='overview';
+  render();
+  $('#results').scrollIntoView({behavior:'smooth',block:'start'});
+ }catch(err){
+  $('#results').innerHTML='<div class="not-found"><h3>We hit a snag.</h3><p>'+esc(err.message)+'</p><button class="outline-button" type="button" id="retry">Try again</button></div>';
+  $('#retry')?.addEventListener('click',()=>plan());
+ }finally{button.disabled=false;button.querySelector('span:nth-child(2)').textContent='Build my trip'}
+}
 function render(){const d=state.response;if(!d)return;if(d.mode==='live_discovery'){renderDiscovery(d);return}const n=d.alternatives?.length||0;if(!n){$('#results').innerHTML=`<div class="not-found"><span class="section-label">ONE FIRM BUDGET</span><h3>Let's make ${esc(d.destination)} work.</h3><p>The least expensive combination in our demo catalog comes to approximately <strong>${money(d.lowest_possible)}</strong> including a reserve. Your current budget is <strong>${money(d.budget)}</strong>, leaving a ${money(d.estimated_shortfall)} gap.</p><button type="button" class="outline-button" data-action="increase-budget">Try the minimum budget + €25 →</button></div>`;return}
  let selected=Math.min(state.selection,n-1),option=d.alternatives[selected];state.selection=selected;
  $('#results').innerHTML=`
@@ -59,5 +100,5 @@ function eventActions(ev){const option=ev.target.closest('[data-option]');if(opt
  const action=ev.target.closest('[data-action]');if(!action)return;
  switch(action.dataset.action){case 'download':download();break;case 'print':window.print();break;case 'describe':describe();break;case 'increase-budget':{const newBudget=Math.max(200,Math.min(20000,(state.response?.lowest_possible||700)+25));$('#budget').value=newBudget;updateBudget();plan();break}}
 }
-function init(){setDefaultDate();updateBudget();$('#budget').addEventListener('input',()=>updateBudget('range'));$('#budget-direct').addEventListener('input',()=>updateBudget('direct'));$('#plan-form').addEventListener('submit',plan);$('#prompt-apply').addEventListener('click',async()=>{if(await parsePrompt())plan()});$$('[data-prompt]').forEach(btn=>btn.addEventListener('click',async()=>{$('#prompt').value=btn.dataset.prompt;if(await parsePrompt())plan()}));$('#results').addEventListener('click',eventActions);plan();}
+function init(){setDefaultDate();updateBudget();$('#budget').addEventListener('input',()=>updateBudget('range'));$('#budget-direct').addEventListener('input',()=>updateBudget('direct'));$('#plan-form').addEventListener('submit',plan);$('#prompt-apply').addEventListener('click',async()=>{if(await parsePrompt())plan()});$$('[data-prompt]').forEach(btn=>btn.addEventListener('click',async()=>{$('#prompt').value=btn.dataset.prompt;if(await parsePrompt())plan()}));$('#results').addEventListener('click',eventActions);$('#results').innerHTML='<div class="result-loading">Describe where you want to go. CROSS will interpret the request and search for matching places.</div>';}
 document.addEventListener('DOMContentLoaded',init);
