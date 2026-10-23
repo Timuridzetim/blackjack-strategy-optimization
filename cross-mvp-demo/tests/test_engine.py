@@ -42,24 +42,38 @@ def test_parser():
     assert d['days']==5 and d['travelers']==2 and d['budget']==700
 
 
-def test_api():
+def test_api(monkeypatch):
+    import app.discovery as discovery
+    async def fake(city, interests):
+        return {'places':[{'name':'Sample Museum','category':'Museums','url':'https://en.wikipedia.org/wiki/Museum','source':'Wikipedia · geolocated','details':'source record'}],
+                'country':'Portugal','source_type':'wikipedia_geosearch','geo_located':True}
+    monkeypatch.setattr(discovery,'_load_live',fake)
     r=client.post('/api/plan',json={'origin':'Madrid','destination':'Lisbon','days':5,'travelers':2,'budget':700,'start_date':'2026-12-08'})
     assert r.status_code==200
-    assert r.json()['alternatives'][0]['total']<=700
+    assert r.json()['mode']=='live_discovery'
+    assert r.json()['places'][0]['name']=='Sample Museum'
+    assert 'alternatives' not in r.json()
 
 
-def test_arbitrary_destination_does_not_invent_prices():
+def test_arbitrary_destination_does_not_invent_prices(monkeypatch):
+    import app.discovery as discovery
+    async def fake(city, interests):
+        return {'places':[], 'country':'', 'source_type':'search_only','geo_located':False}
+    monkeypatch.setattr(discovery,'_load_live',fake)
     r=client.post('/api/plan',json={'destination':'Moon'})
     assert r.status_code==200
     data=r.json()
     assert data['mode']=='live_discovery'
-    assert 'budget_notice' in data
-    assert 'alternatives' not in data
+    assert 'budget_notice' in data and 'alternatives' not in data
+    assert data['count']==0 and len(data['source_links'])>=2
 
 
 def test_prevent_html_injection_in_origin():
-    r=client.post('/api/plan',json={'origin':'<script>alert(1)</script>'})
-    assert r.status_code==200  # HTML escaping happens in front end; API returns structured JSON
+    # Structured request accepts origin as text; front-end applies esc() to every
+    # user-supplied and remotely sourced visible value.
+    assert PlanRequest(origin='<script>alert(1)</script>').origin.startswith('<script>')
+    js=open(__import__('pathlib').Path(__file__).parents[1]/'app/static/app.js',encoding='utf8').read()
+    assert "const esc =" in js and 'esc(d.origin)' in js
 
 
 def test_preference_changes_initial_choice():
@@ -82,54 +96,93 @@ def test_russian_guide_parsing():
     d=fallback_parse('В Хельсинки на 5 дней, 4 человека, 5000 евро, сауны')
     assert d['destination']=='Helsinki' and d['travelers']==4 and d['budget']==5000 and d['days']==5
 
-def test_helsinki_real_venue_fallback_without_flight_pricing():
-    from app.discovery import explore_trip
-    import asyncio
-    data=asyncio.run(explore_trip(PlanRequest(destination='Helsinki',interests=['Saunas'],budget=5000,travelers=4)))
-    assert data['mode']=='live_discovery' and data['budget']==5000
-    assert any('Löyly' in p['name'] for p in data['places'])
-    assert 'NOT quoted' in data['budget_notice']
-    assert data['count']>=4
-
-
-def test_tallinn_fallback_has_real_venue_cards_even_when_osm_fails(monkeypatch):
-    """Regression for reported Tallinn 0 locations screenshot."""
+def test_generic_city_discovery_does_not_use_preloaded_places(monkeypatch):
     import asyncio
     import app.discovery as discovery
-
-    async def unavailable(*_args, **_kwargs):
-        raise LookupError('Public mapping servers temporarily unavailable')
-
-    monkeypatch.setattr(discovery, '_load_osm', unavailable)
-    request=PlanRequest(origin='Madrid', destination='Tallinn', travelers=2,
-                        days=4, budget=700, interests=['Culture','Views'])
-    result=asyncio.run(discovery.explore_trip(request))
-    assert result['status']=='discovered'
-    assert result['source_type']=='directory_fallback'
-    assert result['count']>=6
-    names={p['name'] for p in result['places']}
-    assert 'Tallinn Old Town' in names
-    assert 'Kohtuotsa viewing platform' in names
-    assert all(p['url'].startswith('https://') for p in result['places'])
-    assert all('price_eur_pp' not in p for p in result['places'])
-    assert result['travelers']==2 and result['budget']==700
-    assert len(result['days_preview'])==4
-    assert any(d['stops'] for d in result['days_preview'])
-    assert 'NOT quoted' in result['budget_notice']
-
-
-def test_tallinn_osm_success_does_not_discard_official_sources(monkeypatch):
-    import asyncio
-    import app.discovery as discovery
-
-    async def success(*_args,**_kwargs):
-        return ([{'name':'Contemporary Gallery', 'category':'Culture',
-                  'url':'https://www.openstreetmap.org/node/123',
-                  'details':'', 'source':'OpenStreetMap'}], 'Estonia')
-
-    monkeypatch.setattr(discovery, '_load_osm', success)
-    result=asyncio.run(discovery.explore_trip(PlanRequest(destination='Tallinn')))
+    async def search(city,interests):
+        assert city=='Ulaanbaatar'
+        return {'places':[{'name':'Named real park','category':'Outdoors','url':'https://www.openstreetmap.org/node/1',
+                 'source':'OpenStreetMap','details':''}],
+                'country':'Mongolia','source_type':'openstreetmap_live','geo_located':True}
+    monkeypatch.setattr(discovery,'_load_live',search)
+    result=asyncio.run(discovery.explore_trip(PlanRequest(destination='Ulaanbaatar',interests=['Hiking'])))
+    assert result['count']==1
     assert result['source_type']=='openstreetmap_live'
-    assert result['count']>=7
-    assert any(p['name']=='Contemporary Gallery' for p in result['places'])
-    assert any(p['source']=='Visit Tallinn · official' for p in result['places'])
+    assert result['places'][0]['source']=='OpenStreetMap'
+    assert 'NOT priced' in result['budget_notice']
+
+
+def test_generic_cities_and_interests():
+    from app.intent import fallback_parse
+    cases=[
+      ('Tallinn for 2 people, €700 total, 4 days, medieval castles and sea','Tallinn',700,2,4),
+      ('Helsinki, 4 people, €5,000 total, 5 days. We want saunas and local food','Helsinki',5000,4,5),
+      ('Kyoto, 3 people, €2,000 total. We want temples and food','Kyoto',2000,3,None),
+      ('I want to go to Ulaanbaatar for 3 people under €1000, love hiking','Ulaanbaatar',1000,3,None),
+      ('Travel to San Sebastian for 4 people, wine tours','San Sebastian',None,4,None),
+      ('I want to visit Marrakech for 3 people under 5k euros','Marrakech',5000,3,None),
+    ]
+    for prompt,city,budget,people,days in cases:
+        p=fallback_parse(prompt,{'destination':'Lisbon','budget':700,'travelers':2})
+        assert p['destination']==city,(prompt,p)
+        if budget:assert p['budget']==budget,(prompt,p)
+        assert p['travelers']==people,(prompt,p)
+        if days:assert p['days']==days,(prompt,p)
+    assert 'wine tours' in fallback_parse('Travel to San Sebastian for 4 people, wine tours')['interests']
+    assert 'Temples' in fallback_parse('Kyoto for 4 people. We want temples')['interests']
+
+
+def test_osm_query_uses_generic_interest_mapping():
+    import app.discovery as d
+    q=d._overpass_query(35.6762,139.6503,['Temples'])
+    assert 'place_of_worship' in q
+    assert '35.67620' in q
+    assert 'Tallinn' not in q and 'Helsinki' not in q
+    q2=d._overpass_query(-12.0464,-77.0428,['Food'])
+    assert 'restaurant' in q2 and 'Lima' not in q2
+
+
+def test_dynamic_http_source_fallback(monkeypatch):
+    # Simulate: Nominatim denied, Photon succeeds, Overpass down,
+    # Wikipedia geosearch supplies two real geolocated encyclopedia entries.
+    import app.discovery as d
+    import asyncio, httpx
+    d.CACHE.clear();d.GEO_CACHE.clear()
+    def handler(request):
+        url=str(request.url)
+        if 'nominatim' in url or 'overpass' in url:
+            return httpx.Response(503,json={'error':'busy'})
+        if 'photon.komoot.io' in url:
+            return httpx.Response(200,json={'features':[{'geometry':{'coordinates':[139.69,35.69]},
+                        'properties':{'country':'Japan','osm_value':'city'}}]})
+        if 'en.wikipedia.org' in url and 'geosearch' in url:
+            return httpx.Response(200,json={'query':{'geosearch':[{'title':'Tokyo Tower','dist':890},
+                                               {'title':'Ueno Park','dist':1700}]}})
+        return httpx.Response(200,json={'query':{'search':[]}})
+    class FakeClient(httpx.AsyncClient):
+        def __init__(self,*args,**kwargs):
+            kwargs['transport']=httpx.MockTransport(handler)
+            super().__init__(*args,**kwargs)
+    monkeypatch.setattr(d.httpx,'AsyncClient',FakeClient)
+    result=asyncio.run(d._load_live('Tokyo',['Views']))
+    assert result['source_type']=='wikipedia_geosearch'
+    assert any(p['name']=='Tokyo Tower' for p in result['places'])
+    assert result['country']=='Japan'
+    assert all(p['url'].startswith('https://en.wikipedia.org') for p in result['places'])
+
+
+def test_search_links_only_mode_is_honest(monkeypatch):
+    import asyncio, app.discovery as d
+    async def nothing(city,interests):
+        return {'places':[],'country':'','source_type':'search_only','geo_located':False}
+    monkeypatch.setattr(d,'_load_live',nothing)
+    r=asyncio.run(d.explore_trip(PlanRequest(destination='Pucón',budget=2000)))
+    assert r['status']=='search_links_only' and r['count']==0
+    assert any('Puc' in s['url'] for s in r['source_links'])
+    assert not r['priced_venues']
+
+
+def test_rejects_unsafe_media_url():
+    import app.discovery as d
+    assert d._url('javascript:alert(1)','https://www.openstreetmap.org')=='https://www.openstreetmap.org'
+    assert d._url('http://127.0.0.1/x','https://www.openstreetmap.org')=='https://www.openstreetmap.org'

@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from .catalog import CITIES
 from .intent import parse_intent
-from .discovery import explore_trip
+from .discovery import explore_trip, _load_live
 from .engine import PlanRequest, parse_message, plan_trip
 
 BASE=Path(__file__).parent
@@ -22,12 +22,12 @@ def index():
 
 @app.get("/api/health")
 def health():
-    return {"ok":True,"brand":"CROSS","inventory":"demo fixtures + open place discovery", "llm_available": bool(os.getenv("LLM_API_KEY") or os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY"))}
+    return {"ok":True,"brand":"CROSS","inventory":"live multi-source place discovery; no live flight or hotel quotes", "llm_available": bool(os.getenv("LLM_API_KEY") or os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY"))}
 
 @app.get("/api/config")
 def config():
     return {"destinations":[{"name":name,"country":value["country"],"tagline":value["tagline"]} for name,value in CITIES.items()],
-            "mode":"demo_and_osm_discovery","free_to_user":True,"live_inventory":False, "llm_configured": bool(os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY")),
+            "mode":"multi_source_discovery","free_to_user":True,"live_inventory":False, "llm_configured": bool(os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY")),
             "pricing_message":"Sample estimates only; no live inventory or price lock."}
 
 class ParseRequest(BaseModel):
@@ -38,11 +38,21 @@ class ParseRequest(BaseModel):
 async def parse(req:ParseRequest):
     return await parse_intent(req.message,req.current)
 
+
+@app.get("/api/preview")
+async def preview(destination: str, interest: str = "Culture"):
+    """Read-only live-source QA: discover any location without making a booking."""
+    if not 2 <= len(destination) <= 70 or not 1 <= len(interest) <= 45:
+        raise HTTPException(status_code=422, detail="Invalid destination or interest")
+    found = await _load_live(destination, [interest])
+    return {"destination":destination,"interest":interest,"source_type":found["source_type"],
+            "count":len(found["places"]),"examples":found["places"][:5],
+            "search_only":found["source_type"]=="search_only"}
+
 @app.post("/api/plan")
 async def plan(req:PlanRequest):
-    if req.destination not in CITIES or any(x.lower().startswith("sauna") for x in req.interests):
-        return await explore_trip(req)
-    return plan_trip(req)
+    # Real discovery by default for *all* cities; never silently fall back to synthetic flight prices.
+    return await explore_trip(req)
 
 class DescribeRequest(BaseModel):
     request:PlanRequest

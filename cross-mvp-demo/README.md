@@ -141,3 +141,30 @@ Dockerfile            single small VPS process
   deterministic parser. Limit public access to avoid consuming free quotas.
 - OpenStreetMap/Nominatim is volunteer-operated and rate limited; use caching,
   attribution and authorized commercial providers before launching at scale.
+
+
+## Multi-source discovery v0.4 (all destinations)
+
+The public `/api/plan` endpoint now **always** uses live discovery; the old
+`synthetic_catalog` pricing engine remains available in local code solely for
+non-live optimizer tests. Never show the old sample flight/hotel prices as real.
+
+- Resolves arbitrary named destinations through Nominatim, Photon and a Wikipedia
+  coordinates fallback; caches location coordinates for 24 hours.
+- In parallel queries independent Overpass mirrors for typed OSM attractions and
+  Wikipedia geosearch for geolocated encyclopedia entries; caches results 1 hour.
+- Wikipedia article keyword search additionally covers custom interests not
+  present in the general activity taxonomy. These are explicitly marked research,
+  not confirmed local attractions.
+- UI always supplies relevant destination-specific direct map search links, but
+  labels upstream outages and avoids inventing hotels, fares or venues.
+- `/api/preview?destination=Kyoto&interest=Temples` provides read-only
+  diagnostics with search provenance. Calls use a descriptive User-Agent.
+- The no-key regex parser covers many ordinary English/Russian requests but is
+  **not a substitute for a real multilingual LLM**. For complex arbitrary
+  phrasing, configure `GROQ_API_KEY` or `GEMINI_API_KEY` in Render Environment.
+- Search providers are independent, rate-limited third parties without uptime
+  guarantees; there is no perfect 100%-coverage free worldwide travel API.
+
+OpenStreetMap and Wikipedia attribution is visible in results. Public APIs have
+usage limits and should not be used as unlimited enterprise search infrastructure.
