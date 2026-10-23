@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: cross-mvp-demo
+    runtime: python
+    plan: free
+    region: frankfurt
+    rootDir: cross-mvp-demo
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /api/health

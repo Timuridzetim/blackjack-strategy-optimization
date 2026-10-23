@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#10223b" />
+  <title>CROSS — One trip. One firm budget.</title>
+  <meta name="description" content="CROSS turns your destination and budget into a complete travel itinerary. Discover the budget-first travel agent prototype." />
+  <link rel="icon" href="/static/cross-logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Roboto+Condensed:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="/static/styles.css" rel="stylesheet" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topnav">
+      <a class="brand" href="#top" aria-label="CROSS home"><img src="/static/cross-logo.png" alt="CROSS logo" /><span>CROSS</span><small>TRAVEL, SORTED.</small></a>
+      <nav class="navigation" aria-label="Main navigation">
+        <a class="active" href="#planner">Plan a trip</a>
+        <a href="#how-it-works">How it works</a>
+        <a href="#price-integrity">Price integrity</a>
+      </nav>
+      <div class="navright"><span class="tag-live"><i></i> WORKING MVP</span><a class="nav-link" href="/api/docs" target="_blank" rel="noopener">API docs <span>↗</span></a></div>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-text">
+          <div class="eyebrow"><span class="eyebrow-line"></span> THE BUDGET-FIRST TRAVEL AGENT <span class="eyebrow-dot">✦</span></div>
+          <h1 id="hero-title">One trip.<br/><em>One firm budget.</em></h1>
+          <p>Less tab-hopping. More takeoffs. Tell CROSS where you want to go, and turn your budget into a complete travel plan.</p>
+          <div class="hero-chips"><span>✦ AI-assisted planning</span><span>✓ One all-in budget</span><span>↗ Free for travelers</span></div>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+          <div class="hero-boarding">
+            <div class="hero-boarding-top"><img src="/static/cross-logo.png" /><span>YOUR NEXT ADVENTURE</span><span class="star-icon">✺</span></div>
+            <div class="hero-route"><span>MAD</span><span class="line-route"><b></b><span>✈</span><b></b></span><span>LIS</span></div>
+            <div class="hero-route-meta"><span>MADRID</span><span>LISBON</span></div>
+            <div class="ticket-line"></div>
+            <div class="ticket-bottom"><div><small>FIRM BUDGET</small><strong>€700</strong></div><div><small>TRIP LENGTH</small><strong>5 DAYS</strong></div><span class="ticket-check">✓</span></div>
+          </div>
+          <div class="floating-score">✳ <span>One plan.<br/><b>No chaos.</b></span></div>
+        </div>
+      </section>
+
+      <section class="planner-card" id="planner" aria-labelledby="planner-title">
+        <div class="planner-top"><div><div class="section-label">YOUR NEXT TRIP STARTS HERE</div><h2 id="planner-title">Where are we taking you?</h2></div><div class="powered-pill"><span>✦</span> CROSS AGENT</div></div>
+        <form id="plan-form">
+          <div class="prompt-frame"><span class="prompt-symbol">✧</span><textarea id="prompt" rows="2" maxlength="500" placeholder="Try: Plan 5 days from Madrid to Lisbon for 2 people under €700..."></textarea><button id="prompt-apply" type="button" class="prompt-use" title="Apply message to trip details">Use message <span>↗</span></button></div>
+          <div class="suggestion-row"><span>TRY THIS</span><button type="button" class="suggestion" data-prompt="Plan 5 days from Madrid to Lisbon for 2 people under €700">Lisbon under €700 ↗</button><button type="button" class="suggestion" data-prompt="Plan 4 days from Madrid to Porto for 2 people under €550">Porto weekend ↗</button><button type="button" class="suggestion" data-prompt="Plan 4 days from Madrid to Paris for 2 people under €900">Paris on a budget ↗</button></div>
+          <div class="form-divider"></div>
+          <div class="controls-grid">
+            <label class="field"><span>FROM</span><div class="input-wrap"><span class="field-icon">◎</span><input id="origin" value="Madrid" maxlength="70" required aria-label="Origin city" /></div></label>
+            <label class="field"><span>TO</span><div class="input-wrap"><span class="field-icon">✈</span><select id="destination" aria-label="Destination city"><option>Lisbon</option><option>Porto</option><option>Paris</option><option>Rome</option><option>Prague</option></select></div></label>
+            <label class="field"><span>START DATE</span><div class="input-wrap"><span class="field-icon">◷</span><input id="start_date" type="date" aria-label="Travel start date" required /></div></label>
+            <label class="field"><span>DAYS</span><div class="input-wrap"><span class="field-icon">☼</span><select id="days" aria-label="Trip duration"><option value="3">3 days</option><option value="4">4 days</option><option value="5" selected>5 days</option><option value="6">6 days</option><option value="7">7 days</option><option value="8">8 days</option><option value="10">10 days</option><option value="14">14 days</option></select></div></label>
+            <label class="field"><span>TRAVELERS</span><div class="input-wrap"><span class="field-icon">♧</span><select id="travelers" aria-label="Number of travelers"><option value="1">1 traveler</option><option value="2" selected>2 travelers</option><option value="3">3 travelers</option><option value="4">4 travelers</option><option value="5">5 travelers</option><option value="6">6 travelers</option></select></div></label>
+            <label class="field"><span>TRAVEL STYLE</span><div class="input-wrap"><span class="field-icon">✳</span><select id="preference" aria-label="Travel style"><option value="balanced">Best fit</option><option value="save">Save as much as possible</option><option value="comfort">More comfort</option></select></div></label>
+          </div>
+          <div class="bottom-row">
+            <div class="budget-control"><div class="budget-copy"><span>YOUR MAXIMUM TRIP BUDGET</span><strong id="budget-amount">€700</strong></div><input type="range" id="budget" min="200" max="2000" value="700" step="25" aria-label="Firm trip budget" /><div class="budget-limits"><span>€200</span><span>€2,000</span></div></div>
+            <button type="submit" id="submit-plan" class="plan-button"><span class="button-star">✦</span><span>Build my trip</span><span class="button-arrow">→</span></button>
+          </div>
+        </form>
+        <p class="planner-foot"><span class="mini-shield">✓</span> CROSS planning is free <span class="bullet-separator">·</span> You always approve the final booking <span class="bullet-separator">·</span> <strong>Demo data</strong> until live supplier access is connected</p>
+      </section>
+
+      <section class="results-shell" id="results" aria-live="polite"><div class="result-loading">Preparing a smarter trip…</div></section>
+
+      <section class="how" id="how-it-works"><div class="how-lead"><span class="section-label">THE CROSS WAY</span><h2>From 500 tabs<br/>to <span>one clean plan.</span></h2><p>No complicated prompts. No jumping between booking sites just to compare totals. One place to organize every decision.</p></div><div class="how-items"><div class="how-item"><span>01</span><strong>Tell us your budget</strong><p>Destination, dates, people, and what matters most.</p></div><div class="how-item"><span>02</span><strong>Compare the whole trip</strong><p>Transport, places to stay, local travel, and activities in one view.</p></div><div class="how-item"><span>03</span><strong>Take off with confidence</strong><p>Review sources and final prices on the provider’s site before booking.</p></div></div></section>
+
+      <section class="integrity" id="price-integrity"><div class="integrity-icon">✓</div><div><h3>Real travel needs real prices.</h3><p>Price integrity is the CROSS product promise: supplier-linked offers, mandatory fee totals and a fresh check before checkout. The current preview demonstrates the workflow using <b>synthetic sample prices</b> and never presents them as bookable fares.</p></div><a href="/api/docs" target="_blank" rel="noopener">Explore the API ↗</a></section>
+    </main>
+    <footer><a class="foot-brand" href="#top"><img src="/static/cross-logo.png" alt="" /> CROSS</a><p>One trip. One firm budget.</p><span>© 2026 CROSS · University MVP prototype</span></footer>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
